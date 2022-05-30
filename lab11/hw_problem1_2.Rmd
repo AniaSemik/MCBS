@@ -1,0 +1,135 @@
+---
+title: "homework11"
+author: "Anna Semik"
+date: '2022-05-23'
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+# Homework Problem 1
+Analyze the 68k PBMCs dataset in the same way as presented in the Seurat's guide with PBMC3k. Apply QC, PCA, jackstraw, clustering, and t-SNE to create figure similar to Figure 3b on Zheng et al. 2017. Note that there are differences between Zheng's original analysis and Seurat's analysis. Pay attentions to hyper-parameters that you must choose for this new bigger dataset.
+
+Provide R markdown file with your codes and outputs.
+
+Present the t-SNE visualization with 10 clusters as defined by K-means clustering
+
+Reproduce Figure 3 but note difference in results: https://www.nature.com/articles/ncomms14049/figures/3
+```{r}
+library(dplyr)
+library(Seurat)
+library(patchwork)
+
+hwp1.data <- Read10X(data.dir = "./hg19_hw/")
+hwp1 <- CreateSeuratObject(counts = hwp1.data, project = "hw111", min.cells = 3, min.features = 200)
+hwp1
+
+```
+
+```{r}
+VlnPlot(hwp1, features = c("nFeature_RNA", "nCount_RNA"), ncol = 2, same.y.lims=TRUE, pt.size = FALSE)
+```
+
+QC
+
+```{r}
+hwp1[["percent.mt"]] <- PercentageFeatureSet(hwp1, pattern = "^MT-")
+VlnPlot(hwp1, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3, pt.size = FALSE)
+```
+
+```{r}
+FeatureScatter(hwp1, feature1 = "nCount_RNA", feature2 = "percent.mt") +
+  FeatureScatter(hwp1, feature1 = "nCount_RNA", feature2 = "nFeature_RNA")
+```
+```{r}
+hwp1 <- subset(hwp1, subset = nFeature_RNA > 200 & nFeature_RNA < 2300 & percent.mt < 12)
+```
+
+```{r}
+hwp1 <- NormalizeData(hwp1)
+```
+
+preparation to PCA
+
+```{r}
+hwp1 <- FindVariableFeatures(hwp1, selection.method = "vst", nfeatures = 2000)
+
+# Identify the 10 most highly variable genes
+top10 <- head(VariableFeatures(hwp1), 10)
+
+# plot variable features with and without labels
+plot1 <- VariableFeaturePlot(hwp1)
+plot2 <- LabelPoints(plot = plot1, points = top10, repel = TRUE)
+plot1
+plot2
+```
+
+```{r}
+all.genes <- rownames(hwp1)
+hwp1<- ScaleData(hwp1, features = all.genes)
+```
+
+PCA on scaled data
+```{r}
+hwp1 <- RunPCA(hwp1, features = VariableFeatures(object = hwp1))
+print(hwp1[["pca"]], dims = 1:5, nfeatures = 5)
+
+VizDimLoadings(hwp1, dims = 1:2, reduction = "pca")
+```
+
+```{r}
+DimPlot(hwp1, reduction = "pca")
+DimHeatmap(hwp1, dims = 1, cells = 500, balanced = TRUE)
+DimHeatmap(hwp1, dims = 1:15, cells = 500, balanced = TRUE)
+```
+
+Jackstraw
+```{r}
+# NOTE: This process can take a long time for big datasets, comment out for expediency. More
+# approximate techniques such as those implemented in ElbowPlot() can be used to reduce
+# computation time
+hwp1 <- JackStraw(hwp1, num.replicate = 100)
+hwp1 <- ScoreJackStraw(hwp1, dims = 1:20)
+
+JackStrawPlot(hwp1, dims = 1:15)
+
+ElbowPlot(hwp1)
+```
+
+Clustering
+```{r}
+hwp1 <- FindNeighbors(hwp1, dims = 1:10)
+hwp1 <- FindClusters(hwp1, resolution = 0.5)
+
+head(Idents(hwp1), 5)
+```
+
+tSNE
+```{r}
+hwp1 <- RunTSNE(hwp1, dims = 1:10)
+
+png('hw_problem1.png')
+DimPlot(hwp1, reduction = "tsne")
+dev.off()
+```
+
+# Homework Problem 2
+Create a hierachical clustering by applying K-means clustering to cells defined by each of 10 cluster. Try to find a suitable number of clusters (k) for each sub-population.
+```{r}
+hwp1$cluster = as.integer(Idents(hwp1))
+```
+
+```{r}
+for (i in 1:10){
+  cluster = hwp1[, hwp1$cluster == i]
+  neighbours = FindNeighbors(cluster,dims=1:10)
+  sub_clusters = FindClusters(neighbours)
+  cluster$sub_clusters = Idents(sub_clusters)
+  
+  png(paste0("problem2_", i, ".png"))
+  print(DimPlot(cluster, group.by = 'sub_clusters', label=TRUE))
+  dev.off()
+}
+```
+
