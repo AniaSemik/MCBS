@@ -1,0 +1,235 @@
+---
+title: "Gene expression in rabbit organs during development"
+subtitle: "MCBS final project"
+author: Anna Semik
+output:
+  html_document:
+    df_print: paged
+    keep_md: yes
+  pdf_document: default
+---
+
+## Part 1. Data exploration
+
+Based on the data from the "Rabbit RNA-seq time-series of the development of seven major organs" experiment.
+```{r header, echo=FALSE, include=FALSE, cache=TRUE, warning=FALSE, message=FALSE}
+library(ggplot2)
+library(tidyr)
+library(tidyverse)
+library(data.table)
+
+library(devtools)
+library(Biobase)
+library(limma)
+library(genefilter)
+library(qvalue)
+library(corpcor)
+```
+
+### View the data we get
+```{r load_data, cache=TRUE}
+fpkms_table <- read.table(file = 'fpkms.csv', sep = ',', header = TRUE)
+
+fpkms_table[is.na(fpkms_table)] <- 0
+#fpkms_table <- fpkms_table[!is.na(fpkms_table),]
+
+fpkms_table
+```
+### Exploring the data with some basic plots.
+Histograms of values for each day
+```{r histo_days, cache=TRUE}
+for (day in unique(fpkms_table$Day)){
+  sub_df = fpkms_table[fpkms_table$Day == day,]
+  jpeg(file=paste("histo_", day, ".jpeg"))
+  hist(sub_df$value, xlim = c(0,200), breaks=5000, main = paste('Histogram of values on:', day), xlab='value')
+  dev.off()
+}
+```
+
+Histograms of values for each organ
+```{r histo_organs, cache=TRUE}
+for (organ in unique(fpkms_table$Organ)){
+  sub_df = fpkms_table[fpkms_table$Organ == organ,]
+  print(paste('Histogram of values in:', organ))
+  jpeg(file=paste("histo_", organ, ".jpeg"))
+  hist(sub_df$value, xlim = c(0,200), breaks=5000, main = paste('Histogram of values in:', organ), xlab='value')
+  dev.off()
+}
+```
+
+### Choosing outstanding data for analysis
+```{r, cache=TRUE}
+liver_fpkms = fpkms_table[fpkms_table$Organ == 'liver',]
+liver_fpkms = subset(liver_fpkms, select = -c(X, Organ, Gene.Name))
+
+liver_fpkms
+```
+
+## Part 2. Liver expression data
+### Reshaping and scaling the data.
+```{r, cache=TRUE}
+library(reshape2)
+wide_liver <- dcast(liver_fpkms, Gene.ID ~ Day)
+
+rownames(wide_liver) <- wide_liver$Gene.ID
+wide_liver <- subset(wide_liver, select = -c(Gene.ID))
+wide_liver <- na.omit(wide_liver)
+```
+
+```{r, cache=TRUE}
+heatmap(as.matrix(wide_liver), scale='row')
+```
+
+
+Genes not expressed in the liver
+```{r}
+rownames(wide_liver[apply(wide_liver[,-1], 1, function(x) all(x==0)),])[1:20]
+```
+
+### SVD
+```{r, cache=TRUE}
+wide_liver.log <- log2(wide_liver + 1)
+edata <- t(scale(wide_liver.log, scale=FALSE, center=TRUE))
+svd.out <- svd(edata)
+```
+
+```{r, cache=TRUE}
+plot(1:ncol(t(wide_liver)), svd.out$v[,1],pch=20, col='green', main='1st PC')
+plot(1:ncol(t(wide_liver)), svd.out$v[,2],pch=20, col='blue', main='2nd PC')
+```
+```{r, cache=TRUE}
+variance.explained = prop.table(svd.out$d^2)
+variance.explained
+
+#jpeg(file="variance_explained.jpeg")
+par(mfrow=c(1,2))
+plot(svd.out$d, pch=20, ylab="Singular values")
+plot(svd.out$d^2/sum(svd.out$d^2)*100, pch=20, ylab="% variance explained")
+#dev.of
+```
+
+### Visualisation of the clustered genes expressed in the liver and analysis of their function.
+```{r, cache=TRUE}
+#jpeg(file="genes_plotted.jpeg")
+TL = svd.out$v[1:2,] %*% edata
+dim(TL)
+tTL <- data.frame(t(TL))
+ggplot(tTL) + geom_point(aes(x=X1, y=X2)) + geom_vline(xintercept = 0) +
+  geom_vline(xintercept = 0.4) + geom_vline(xintercept = 0.83) +
+  geom_vline(xintercept = 1.1) + geom_vline(xintercept = 1.3) +
+  geom_vline(xintercept = 1.5) + geom_vline(xintercept = 1.75) +
+  geom_vline(xintercept = 4) + geom_vline(xintercept = 5)
+#dev.off()
+```
+
+#### X1 < 0
+```{r}
+unique(fpkms_table[fpkms_table$Gene.ID %in% (rownames(tTL[tTL$X1<0,])), ]$Gene.Name)[1:18]
+```
+- GLIPR2 - Enables protein homodimerization activity
+- CCIN - basic protein of the sperm head cytoskeleton
+- CENPN - Centromere protein N
+- NR0B1 - DAX1 protein, nuclear receptor, important negative modulator of transcription
+- ZNF503 - enable metal ion binding activity. Involved in G1 to G0 transition involved in cell differentiation; negative regulation of cell population proliferation; and negative regulation of gene expression
+- PBK - spermatogenesis
+- NKX2-5 - transcription factor functions in heart formation and development
+- C11orf65 - negative regulation of mitochondrial fission and negative regulation of protein targeting to mitochondrion.
+- RTP1 - olfactory receptor binding activity
+- FBXO5 - ubiquitination
+- USP27X - deubiquitination
+- FRMPD1 - establishment of protein localization to membrane and regulation of G protein-coupled receptor signaling pathway
+
+
+#### 0 < X1 < 0.4
+```{r}
+unique(fpkms_table[fpkms_table$Gene.ID %in% (rownames(tTL[tTL$X1>0 & tTL$X1<0.4, ])), ]$Gene.Name)[13:46]
+```
+- ELP6 - positive regulation of cell migration. Located in cytosol and nucleus. Part of elongator holoenzyme complex
+- EFCAB7 - positive regulation of protein import into nucleus; positive regulation of protein localization to ciliary membrane; and positive - regulation of transcription by RNA polymerase II. Predicted to be located in ciliary membrane.
+- KALRN - Huntington's disease (HD), Coronary Heart Disease 5 and Schizophrenia 1; Serine/Threonine Kinase
+- UIMC1 - Ubiquitin Interaction Motif Containing 1
+- DAPK2 - programmed cell death; serine/threonine protein kinase family
+- LCP2 - plays a role in TCR-mediated intracellular signal transduction
+- DTX2 - ubiquitination
+- XPR1 - G protein-coupled receptor activity and transmembrane signaling receptor activity
+- AN04 - Involved in chloride transport
+
+
+#### 0.4 < X1 < 0.83
+```{r}
+unique(fpkms_table[fpkms_table$Gene.ID %in% (rownames(tTL[tTL$X1>0.4 & tTL$X1<0.83, ])), ]$Gene.Name)[4:12]
+```
+- SLC43A2 - This protein may contribute to the transfer of amino acids across the placental membrane to the fetus.
+- C21orf91 - cerebral cortex neuron differentiation and positive regulation of dendritic spine development.
+- NFKBIZ - induction of inflammatory genes 
+- CEP170 - component of the centrosome
+- CKAP4 - cytoskeleton, Enables RNA binding activity.
+- DROSHA - microRNA (miRNA) synthesis
+- SLC12A9 - Predicted to enable potassium:chloride symporter activity. Predicted to be involved in cell volume homeostasis; inorganic ion homeostasis; and inorganic ion transmembrane transport.
+
+
+#### 0.83 < X1 < 1.1
+```{r}
+unique(fpkms_table[fpkms_table$Gene.ID %in% (rownames(tTL[tTL$X1>0.83 & tTL$X1<1.1, ])), ]$Gene.Name)[1:37]
+```
+- BNIP1 - protects cells from virally-induced cell death
+- THAP6 - Predicted to enable DNA binding activity and metal ion binding activity
+- RBM45 - member of the RNA recognition motif
+- SPTLC2 - sphingolipid biosynthesis.
+- TOX3 - contains an HMG-box, indicating that it may be involved in bending and unwinding of DNA and alteration of chromatin structure
+
+
+#### 1.1 < X1 < 1.3
+```{r}
+unique(fpkms_table[fpkms_table$Gene.ID %in% (rownames(tTL[tTL$X1>1.1 & tTL$X1<1.3, ])), ]$Gene.Name)[1:16]
+```
+- DNM1L - dynamin superfamily of GTPases
+- YARS2 - mitochondrial protein that catalyzes the attachment of tyrosine to tRNA(Tyr)
+- SLC17A5 - membrane transporter that exports free sialic acids that have been cleaved off of cell surface lipids and proteins from lysosomes
+- RBBP5 - This gene encodes a ubiquitously expressed nuclear protein which belongs to a highly conserved subfamily of WD-repeat proteins
+- ARMCX2 - involved in development, maintenance of tissue integrity, and tumorigenesis
+
+
+#### 1.3 < X1 < 1.5
+```{r}
+unique(fpkms_table[fpkms_table$Gene.ID %in% (rownames(tTL[tTL$X1>1.3 & tTL$X1<1.5, ])), ]$Gene.Name)[1:8]
+```
+- SMCHD1 - Structural Maintenance Of Chromosomes Flexible Hinge Domain Containing 1
+- WDR81 - may regulate endosome fusion, recycling, sorting and early to late endosome transport
+- MPPE1 - enable GPI anchor binding activity
+- VAV3 - activate pathways leading to actin cytoskeletal rearrangements and transcriptional alterations
+- EXOC6 - required for exocytosis
+- GPR39 - encodes a rhodopsin-type G-protein-coupled receptor (GPCR). The encoded protein is involved in zinc-dependent signaling in epithelial tissue in intestines, prostate and salivary glands
+- PREP - Involved in GPI anchor biosynthetic process.
+
+
+#### 1.5 < X1 < 1.75
+```{r}
+unique(fpkms_table[fpkms_table$Gene.ID %in% (rownames(tTL[tTL$X1>1.5 & tTL$X1<1.75, ])), ]$Gene.Name)[1:10]
+```
+- ELP3 - The protein encoded by this gene is a cytosolic prolyl endopeptidase that cleaves peptide bonds on the C-terminal side of prolyl residues within peptides that are up to approximately 30 amino acids long. Prolyl endopeptidases have been reported to be involved in the maturation and degradation of peptide hormones and neuropeptides
+- DNAJB6 - DnaJ Heat Shock Protein Family (Hsp40) Member B6; polyglutamine aggregation in specific neurons
+- NFIL3 - Nuclear Factor, Interleukin 3 Regulated; transcriptional regulator that binds as a homodimer to activating transcription factor (ATF) sites in many cellular and viral promoters; plays a role in the regulation of circadian rhythm
+- LYRM7 - main enzyme complex in the mitochondrial respiratory chain
+- NUP155 - assembly and functioning of the nuclear pore complex (NPC) which regulates the movement of macromolecules across the nuclear envelope (NE)
+- ASAP3 - The encoded protein promotes cell differentiation and migration
+- AASDHPPT - required for the activation of the alpha-aminoadipate dehydrogenase in the biosynthetic pathway of lysine.
+
+
+#### 4 < X1 < 5
+```{r}
+unique(fpkms_table[fpkms_table$Gene.ID %in% (rownames(tTL[tTL$X1>4 & tTL$X1<5, ])), ]$Gene.Name)[1:18]
+```
+- CLTA - clathrin light chain protein, regulatory elements.
+- MASP1 - The complement pathway plays an essential role in the innate and adaptive immune response.
+- MAGT1 - Magnesium Transporter 1
+- UBXN4 - promotes ER-associated protein degradation
+- GPLD1 - GPI degrading enzyme
+- PSMA1 - Component of the 20S core proteasome complex involved in the proteolytic degradation of most intracellular proteins.
+- EIF2S2 - functions in the early steps of protein synthesis
+- BDH2 - Involved in epithelial cell differentiation and fatty acid beta-oxidation.
+- YWHAZ - interacts with IRS1 protein, suggesting a role in regulating insulin sensitivity
+- CYP39A1 - a member of the cytochrome P450 superfamily of enzymes. This endoplasmic reticulum protein is involved in the conversion of cholesterol to bile acids.
+- ZFAND5 - Involved in protein degradation via the ubiquitin-proteasome system
+- DNASE1L3 - hydrolyzes DNA, is not inhibited by actin, and mediates the breakdown of DNA during apoptosis.
+
